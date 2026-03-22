@@ -1,4 +1,8 @@
-import { CharacterPlayer, createDefaultManifest } from "../src/index.ts";
+import {
+  CharacterPlayer,
+  createSadDemoManifest,
+  type CharacterPose,
+} from "../src/index.js";
 
 async function main(): Promise<void> {
   const wrap = document.querySelector<HTMLDivElement>("#stage-wrap");
@@ -6,7 +10,7 @@ async function main(): Promise<void> {
     throw new Error("#stage-wrap missing");
   }
 
-  const manifest = createDefaultManifest();
+  const manifest = createSadDemoManifest();
   const baseUrl = new URL("./", window.location.origin + import.meta.env.BASE_URL)
     .href;
 
@@ -15,16 +19,34 @@ async function main(): Promise<void> {
     manifest,
     baseUrl,
     transitionMs: 200,
-    initialState: "idle",
+    initialPose: { characterState: "neutral", action: "idle" },
   });
 
   await player.init();
 
-  document.querySelectorAll("button[data-state]").forEach((btn) => {
+  let characterState: CharacterPose["characterState"] = "neutral";
+  let action: CharacterPose["action"] = "idle";
+
+  function applyPose(): void {
+    void player.setPose({ characterState, action });
+  }
+
+  document.querySelectorAll<HTMLButtonElement>("button[data-character-state]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const name = btn.getAttribute("data-state");
-      if (name) {
-        void player.setState(name);
+      const cs = btn.getAttribute("data-character-state");
+      if (cs === "neutral" || cs === "sad") {
+        characterState = cs;
+        applyPose();
+      }
+    });
+  });
+
+  document.querySelectorAll<HTMLButtonElement>("button[data-action]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const a = btn.getAttribute("data-action");
+      if (a === "idle" || a === "talk") {
+        action = a;
+        applyPose();
       }
     });
   });

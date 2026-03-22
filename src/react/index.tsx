@@ -1,11 +1,17 @@
 import { useEffect, useRef, type CSSProperties } from "react";
 import { CharacterPlayer } from "../core/CharacterPlayer.js";
-import type { CharacterManifest, CharacterPlayerOptions } from "../types.js";
+import type {
+  CharacterManifest,
+  CharacterPlayerOptions,
+  CharacterPose,
+} from "../types.js";
 
 export interface CharacterViewProps {
   manifest: CharacterManifest;
   baseUrl: string;
   initialState?: string;
+  initialPose?: CharacterPose;
+  debug?: boolean;
   transitionMs?: number;
   fitPadding?: number;
   queueStateUntilCycleEnd?: boolean;
@@ -17,6 +23,8 @@ export function CharacterView({
   manifest,
   baseUrl,
   initialState,
+  initialPose,
+  debug,
   transitionMs,
   fitPadding,
   queueStateUntilCycleEnd,
@@ -38,6 +46,12 @@ export function CharacterView({
     if (initialState !== undefined) {
       options.initialState = initialState;
     }
+    if (initialPose !== undefined) {
+      options.initialPose = initialPose;
+    }
+    if (debug !== undefined) {
+      options.debug = debug;
+    }
     if (transitionMs !== undefined) {
       options.transitionMs = transitionMs;
     }
@@ -50,7 +64,7 @@ export function CharacterView({
     const player = new CharacterPlayer(options);
     void player.init();
     return () => player.destroy();
-  }, [manifest, baseUrl, initialState, transitionMs, fitPadding, queueStateUntilCycleEnd]);
+  }, [manifest, baseUrl, initialState, initialPose, debug, transitionMs, fitPadding, queueStateUntilCycleEnd]);
 
   return (
     <div

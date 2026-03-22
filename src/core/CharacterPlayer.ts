@@ -1,5 +1,21 @@
 import { AnimatedSprite, Application, Assets, Container, Texture } from "pixi.js";
-import type { CharacterManifest, CharacterPlayerOptions } from "../types.js";
+import type {
+  AnimationStateConfig,
+  CharacterManifest,
+  CharacterPlayerOptions,
+  CharacterPose,
+  LayeredCharacterManifest,
+  LegacyCharacterManifest,
+} from "../types.js";
+import { isLayeredManifest } from "../types.js";
+import {
+  defaultPoseForLayered,
+  isTransitionFlatKey,
+  keyToPose,
+  manifestToFlatStates,
+  poseToKey,
+  transitionFlatKey,
+} from "../manifest.js";
 
 function joinBase(baseUrl: string, frame: string): string {
   const base = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
@@ -9,28 +25,38 @@ function joinBase(baseUrl: string, frame: string): string {
 export class CharacterPlayer {
   readonly container: HTMLElement;
   private readonly manifest: CharacterManifest;
+  private readonly flatStates: Record<string, AnimationStateConfig>;
+  private readonly layered: boolean;
+  private readonly transitionMap: Record<string, Record<string, AnimationStateConfig>> | null;
   private readonly baseUrl: string;
   private readonly transitionMs: number;
   private readonly fitPadding: number;
   private readonly queueStateUntilCycleEnd: boolean;
+  private readonly debug: boolean;
 
   private app: Application | null = null;
   private root: Container | null = null;
   private resizeObserver: ResizeObserver | null = null;
-
-  private currentStateName: string | null = null;
   private currentSprite: AnimatedSprite | null = null;
+
+  /** Current clip key: legacy `idle` / `talk`, layered `neutral/idle`, or internal `__tr__/a/b`. */
+  private currentFlatKey: string | null = null;
+  /** Logical pose when `layered`; unchanged while a transition clip plays. */
+  private currentPose: CharacterPose | null = null;
 
   private transitioning = false;
   private fromSprite: AnimatedSprite | null = null;
   private toSprite: AnimatedSprite | null = null;
   private transitionProgress = 0;
-  private transitionTargetState: string | null = null;
-  private pendingState: string | null = null;
+  private transitionTargetFlatKey: string | null = null;
+  private pendingFlatKey: string | null = null;
   private transitionUpdateBound = this.onTransitionTick.bind(this);
 
-  private deferredTargetState: string | null = null;
+  private deferredTargetFlatKey: string | null = null;
   private waitingForCycleEnd = false;
+
+  /** After a one-shot transition clip mounts, crossfade into this pose key. */
+  private pendingAfterTransitionClip: { targetKey: string } | null = null;
 
   private textureWidth = 512;
   private textureHeight = 512;
@@ -38,23 +64,50 @@ export class CharacterPlayer {
   constructor(options: CharacterPlayerOptions) {
     this.container = options.container;
     this.manifest = options.manifest;
+    this.flatStates = manifestToFlatStates(options.manifest);
+    this.layered = isLayeredManifest(options.manifest);
+    this.transitionMap = isLayeredManifest(options.manifest)
+      ? (options.manifest as LayeredCharacterManifest).transitions
+      : null;
     this.baseUrl = options.baseUrl;
     this.transitionMs = options.transitionMs ?? 200;
     this.fitPadding = options.fitPadding ?? 1;
     this.queueStateUntilCycleEnd = options.queueStateUntilCycleEnd ?? true;
+    this.debug = options.debug ?? false;
 
-    const keys = Object.keys(this.manifest.states);
+    const keys = Object.keys(this.flatStates);
     if (keys.length === 0) {
-      throw new Error("CharacterPlayer: manifest.states must not be empty");
+      throw new Error("CharacterPlayer: manifest must define at least one clip");
     }
-    const def = options.initialState ?? this.manifest.defaultState ?? keys[0];
-    if (!this.manifest.states[def]) {
-      throw new Error(`CharacterPlayer: unknown initial state "${def}"`);
+
+    if (this.layered) {
+      const pose =
+        options.initialPose ??
+        (options.manifest as LayeredCharacterManifest).defaultPose ??
+        defaultPoseForLayered(options.manifest as LayeredCharacterManifest);
+      const k = poseToKey(pose);
+      if (!this.flatStates[k]) {
+        throw new Error(`CharacterPlayer: unknown initial pose "${k}"`);
+      }
+      this.currentPose = pose;
+      this.currentFlatKey = k;
+    } else {
+      if (options.initialPose !== undefined) {
+        throw new Error("CharacterPlayer: initialPose is only valid with a layered manifest");
+      }
+      const legacy = options.manifest as LegacyCharacterManifest;
+      const def =
+        options.initialState ?? legacy.defaultState ?? Object.keys(legacy.states)[0];
+      if (!this.flatStates[def]) {
+        throw new Error(`CharacterPlayer: unknown initial state "${def}"`);
+      }
+      this.currentFlatKey = def;
     }
-    this.currentStateName = def;
+
+    this.logDebug("constructor", { layered: this.layered, initial: this.currentFlatKey });
   }
 
-  /** Create Pixi app, load first state, append canvas. Call once. */
+  /** Create Pixi app, load first clip, append canvas. Call once. */
   async init(): Promise<void> {
     if (this.app) {
       return;
@@ -86,58 +139,180 @@ export class CharacterPlayer {
     this.root = root;
     app.stage.addChild(root);
 
-    const start = this.currentStateName!;
+    const start = this.currentFlatKey!;
     await this.mountState(start);
   }
 
+  /**
+   * Current clip key. Layered manifests use `characterState/action` (e.g. `neutral/idle`);
+   * during a character-state transition the internal `__tr__/from/to` key may be returned.
+   */
   getState(): string | null {
-    return this.currentStateName;
+    return this.currentFlatKey;
   }
 
-  /** Switch animation state; crossfades when `transitionMs` > 0. */
+  /** Logical pose for layered manifests; `null` for legacy flat manifests. */
+  getPose(): CharacterPose | null {
+    return this.currentPose;
+  }
+
+  /** Switch pose (layered manifests only). */
+  async setPose(pose: CharacterPose): Promise<void> {
+    if (!this.layered) {
+      throw new Error("CharacterPlayer: setPose requires a layered manifest");
+    }
+    this.validatePose(pose);
+    const key = poseToKey(pose);
+    await this.applySetFlatKey(key);
+  }
+
+  /** Switch animation clip; crossfades when `transitionMs` > 0. */
   async setState(name: string): Promise<void> {
-    if (!this.manifest.states[name]) {
-      throw new Error(`CharacterPlayer: unknown state "${name}"`);
+    const key = this.resolveSetStateName(name);
+    await this.applySetFlatKey(key);
+  }
+
+  private resolveSetStateName(name: string): string {
+    if (this.layered && (name === "idle" || name === "talk")) {
+      return poseToKey({ characterState: "neutral", action: name });
+    }
+    return name;
+  }
+
+  private validatePose(pose: CharacterPose): void {
+    if (!isLayeredManifest(this.manifest)) {
+      return;
+    }
+    const m = this.manifest as LayeredCharacterManifest;
+    const block = m.characterStates[pose.characterState];
+    if (!block?.actions[pose.action]) {
+      throw new Error(
+        `CharacterPlayer: unknown pose "${pose.characterState}/${pose.action}"`,
+      );
+    }
+  }
+
+  private logDebug(message: string, data?: Record<string, unknown>): void {
+    if (this.debug) {
+      // eslint-disable-next-line no-console
+      console.debug(`[CharacterPlayer] ${message}`, data ?? "");
+    }
+  }
+
+  private logWarn(message: string, data?: Record<string, unknown>): void {
+    // eslint-disable-next-line no-console
+    console.warn(`[CharacterPlayer] ${message}`, data ?? "");
+  }
+
+  /** True while a one-shot character-state transition clip is playing (after crossfade onto it). */
+  private isPlayingTransitionClip(): boolean {
+    return this.currentFlatKey !== null && isTransitionFlatKey(this.currentFlatKey);
+  }
+
+  private async applySetFlatKey(targetKey: string): Promise<void> {
+    if (!this.flatStates[targetKey]) {
+      throw new Error(`CharacterPlayer: unknown state "${targetKey}"`);
     }
     if (!this.app || !this.root) {
-      this.currentStateName = name;
+      this.currentFlatKey = targetKey;
+      this.syncPoseFromFlatKey();
+      this.logDebug("applySetFlatKey (no app)", { targetKey });
+      return;
+    }
+
+    if (this.isPlayingTransitionClip()) {
+      this.pendingFlatKey = targetKey;
+      this.logDebug("queue: pending while transition clip plays", { targetKey });
       return;
     }
 
     if (this.transitioning) {
-      this.pendingState = name;
+      this.pendingFlatKey = targetKey;
+      this.logDebug("queue: pending while crossfading", { targetKey });
       return;
     }
 
     if (this.waitingForCycleEnd) {
-      if (name === this.currentStateName) {
+      if (targetKey === this.currentFlatKey) {
         this.clearCycleWait();
         return;
       }
-      this.deferredTargetState = name;
+      this.deferredTargetFlatKey = targetKey;
+      this.logDebug("queue: deferred until cycle end", { targetKey });
       return;
     }
 
-    if (name === this.currentStateName) {
+    if (targetKey === this.currentFlatKey) {
       return;
     }
 
     if (!this.queueStateUntilCycleEnd) {
-      await this.applyTransitionNow(name);
+      await this.applyTransitionNow(targetKey);
       return;
     }
 
-    this.deferredTargetState = name;
+    this.deferredTargetFlatKey = targetKey;
     this.waitingForCycleEnd = true;
     this.attachCycleEndListener();
   }
 
-  private async applyTransitionNow(name: string): Promise<void> {
-    if (this.transitionMs <= 0) {
-      await this.swapInstant(name);
-    } else {
-      await this.beginCrossfade(name);
+  private syncPoseFromFlatKey(): void {
+    if (!this.layered) {
+      return;
     }
+    const p = this.currentFlatKey ? keyToPose(this.currentFlatKey) : null;
+    if (p) {
+      this.currentPose = p;
+    }
+  }
+
+  private async applyTransitionNow(targetFlatKey: string): Promise<void> {
+    const fromPose = this.currentPose;
+    const toPose = keyToPose(targetFlatKey);
+    if (
+      this.layered &&
+      fromPose &&
+      toPose &&
+      fromPose.characterState !== toPose.characterState
+    ) {
+      this.logDebug("applyTransitionNow: character-state change", {
+        from: fromPose.characterState,
+        to: toPose.characterState,
+      });
+      await this.applyCharacterStateChange(toPose, targetFlatKey);
+      return;
+    }
+    if (this.transitionMs <= 0) {
+      await this.swapInstant(targetFlatKey);
+    } else {
+      await this.beginCrossfade(targetFlatKey);
+    }
+  }
+
+  private async applyCharacterStateChange(
+    targetPose: CharacterPose,
+    targetKey: string,
+  ): Promise<void> {
+    const from = this.currentPose!.characterState;
+    const to = targetPose.characterState;
+    const tr = this.transitionMap?.[from]?.[to];
+    if (!tr) {
+      this.logWarn(`no transition clip for character state "${from}" -> "${to}"; crossfading`, {
+        from,
+        to,
+      });
+      if (this.transitionMs <= 0) {
+        await this.swapInstant(targetKey);
+        this.syncPoseFromFlatKey();
+      } else {
+        await this.beginCrossfade(targetKey);
+      }
+      return;
+    }
+    const trKey = transitionFlatKey(from, to);
+    this.logDebug("play transition clip then target", { trKey, targetKey });
+    this.pendingAfterTransitionClip = { targetKey };
+    await this.applyTransitionNow(trKey);
   }
 
   private clearCycleWait(): void {
@@ -146,7 +321,7 @@ export class CharacterPlayer {
       sprite.onLoop = undefined;
       sprite.onComplete = undefined;
     }
-    this.deferredTargetState = null;
+    this.deferredTargetFlatKey = null;
     this.waitingForCycleEnd = false;
   }
 
@@ -156,12 +331,12 @@ export class CharacterPlayer {
       void this.finishDeferredAndTransition();
       return;
     }
-    const stateName = this.currentStateName;
+    const stateName = this.currentFlatKey;
     if (!stateName) {
       void this.finishDeferredAndTransition();
       return;
     }
-    const cfg = this.manifest.states[stateName];
+    const cfg = this.flatStates[stateName];
     if (sprite.totalFrames <= 1) {
       void this.finishDeferredAndTransition();
       return;
@@ -193,13 +368,59 @@ export class CharacterPlayer {
       sprite.onLoop = undefined;
       sprite.onComplete = undefined;
     }
-    const target = this.deferredTargetState;
-    this.deferredTargetState = null;
+    const target = this.deferredTargetFlatKey;
+    this.deferredTargetFlatKey = null;
     this.waitingForCycleEnd = false;
-    if (!target || target === this.currentStateName) {
+    if (!target || target === this.currentFlatKey) {
       return;
     }
     await this.applyTransitionNow(target);
+  }
+
+  /** Returns true if we scheduled waiting for a transition clip to finish (skip processing crossfade queue). */
+  private maybeAttachTransitionClipCompletion(): boolean {
+    if (
+      !this.pendingAfterTransitionClip ||
+      !this.currentFlatKey ||
+      !isTransitionFlatKey(this.currentFlatKey)
+    ) {
+      return false;
+    }
+    const { targetKey } = this.pendingAfterTransitionClip;
+    this.pendingAfterTransitionClip = null;
+    this.attachTransitionClipCompletion(targetKey);
+    return true;
+  }
+
+  private attachTransitionClipCompletion(targetKey: string): void {
+    const sprite = this.currentSprite;
+    if (!sprite) {
+      void this.finishCharacterTransitionChain(targetKey);
+      return;
+    }
+    const cfg = this.flatStates[this.currentFlatKey!];
+    if (!cfg) {
+      void this.finishCharacterTransitionChain(targetKey);
+      return;
+    }
+    this.logDebug("attachTransitionClipCompletion", { targetKey, loop: cfg.loop });
+    const done = (): void => {
+      sprite.onComplete = undefined;
+      sprite.onLoop = undefined;
+      void this.finishCharacterTransitionChain(targetKey);
+    };
+    if (!cfg.loop) {
+      sprite.onComplete = done;
+    } else {
+      done();
+    }
+  }
+
+  private async finishCharacterTransitionChain(targetKey: string): Promise<void> {
+    const use = this.pendingFlatKey ?? targetKey;
+    this.pendingFlatKey = null;
+    this.logDebug("transition clip complete -> target pose", { targetKey, use });
+    await this.applyTransitionNow(use);
   }
 
   private async swapInstant(name: string): Promise<void> {
@@ -210,7 +431,9 @@ export class CharacterPlayer {
       this.root.removeChildren();
     }
     await this.mountState(name);
-    this.currentStateName = name;
+    this.currentFlatKey = name;
+    this.syncPoseFromFlatKey();
+    this.maybeAttachTransitionClipCompletion();
   }
 
   private async beginCrossfade(name: string): Promise<void> {
@@ -229,7 +452,7 @@ export class CharacterPlayer {
 
     this.fromSprite = outgoing;
     this.toSprite = incoming;
-    this.transitionTargetState = name;
+    this.transitionTargetFlatKey = name;
     this.transitioning = true;
     this.transitionProgress = 0;
 
@@ -264,16 +487,21 @@ export class CharacterPlayer {
     this.currentSprite = kept;
     this.transitioning = false;
 
-    if (this.transitionTargetState) {
-      this.currentStateName = this.transitionTargetState;
+    if (this.transitionTargetFlatKey) {
+      this.currentFlatKey = this.transitionTargetFlatKey;
+      this.syncPoseFromFlatKey();
     }
-    this.transitionTargetState = null;
+    this.transitionTargetFlatKey = null;
 
-    const queued = this.pendingState;
-    this.pendingState = null;
+    const waitingOnTransitionClip = this.maybeAttachTransitionClipCompletion();
 
-    if (queued && queued !== this.currentStateName) {
-      void this.setState(queued);
+    if (!waitingOnTransitionClip) {
+      const queued = this.pendingFlatKey;
+      this.pendingFlatKey = null;
+
+      if (queued && queued !== this.currentFlatKey) {
+        void this.applySetFlatKey(queued);
+      }
     }
   }
 
@@ -288,11 +516,9 @@ export class CharacterPlayer {
   }
 
   private async createSpriteForState(name: string): Promise<AnimatedSprite> {
-    const cfg = this.manifest.states[name];
+    const cfg = this.flatStates[name];
     const urls = cfg.frames.map((f) => joinBase(this.baseUrl, f));
-    const textures = await Promise.all(
-      urls.map((url) => Assets.load<Texture>(url)),
-    );
+    const textures = await Promise.all(urls.map((url) => Assets.load<Texture>(url)));
     const sprite = new AnimatedSprite({
       textures,
       animationSpeed: cfg.fps / 60,
@@ -344,6 +570,8 @@ export class CharacterPlayer {
       this.app = null;
     }
     this.root = null;
-    this.currentStateName = null;
+    this.currentFlatKey = null;
+    this.currentPose = null;
+    this.pendingAfterTransitionClip = null;
   }
 }
