@@ -62,6 +62,10 @@
       button:hover {
         background: #414868;
       }
+      button:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
       .hint {
         font-size: 13px;
         color: #7aa2f7;
@@ -82,10 +86,12 @@
           <span class="group-label">Action</span>
           <button type="button" data-action="idle">idle</button>
           <button type="button" data-action="talk">talk</button>
+          <button type="button" data-play-neutral-click>click</button>
         </div>
         <span class="hint"
           >Melt / unmelt transitions play when switching neutral &harr; sad. Crossfade uses
-          <code>transitionMs</code> (default 200ms).</span
+          <code>transitionMs</code> (default 200ms). While <strong>neutral</strong>, click the cube or
+          the click button — the reaction plays fast and returns to idle when it finishes.</span
         >
       </div>
     </div>

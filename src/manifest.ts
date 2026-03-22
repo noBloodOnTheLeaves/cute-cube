@@ -125,6 +125,8 @@ export const SAD_DEMO_FRAMES = {
   transitionSadToNeutral: 91,
   sadIdle: 150,
   sadTalk: 117,
+  /** `assets/neutral/click/` — neutral reaction one-shot. */
+  neutralClick: 37,
 } as const;
 
 /**
@@ -146,6 +148,12 @@ export function createSadDemoManifest(): LayeredCharacterManifest {
             frames: framePaths("talk", 90),
             fps: 32,
             loop: true,
+          },
+          click: {
+            frames: framePaths("neutral/click", SAD_DEMO_FRAMES.neutralClick),
+            /** Higher than idle/talk so the reaction (especially the opening frames) feels snappier. */
+            fps: 64,
+            loop: false,
           },
         },
       },

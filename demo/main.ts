@@ -27,8 +27,28 @@ async function main(): Promise<void> {
   let characterState: CharacterPose["characterState"] = "neutral";
   let action: CharacterPose["action"] = "idle";
 
+  const clickBtn = document.querySelector<HTMLButtonElement>(
+    "button[data-play-neutral-click]",
+  );
+
+  function syncNeutralClickUi(): void {
+    const neutral = characterState === "neutral";
+    if (clickBtn) {
+      clickBtn.disabled = !neutral;
+    }
+    wrap.style.cursor = neutral ? "pointer" : "default";
+  }
+
   function applyPose(): void {
     void player.setPose({ characterState, action });
+    syncNeutralClickUi();
+  }
+
+  function playNeutralClickIfAllowed(): void {
+    if (characterState !== "neutral") {
+      return;
+    }
+    void player.playNeutralClick();
   }
 
   document.querySelectorAll<HTMLButtonElement>("button[data-character-state]").forEach((btn) => {
@@ -50,6 +70,16 @@ async function main(): Promise<void> {
       }
     });
   });
+
+  clickBtn?.addEventListener("click", () => {
+    playNeutralClickIfAllowed();
+  });
+
+  wrap.addEventListener("click", () => {
+    playNeutralClickIfAllowed();
+  });
+
+  syncNeutralClickUi();
 }
 
 void main();
