@@ -1,0 +1,13 @@
+node_modules
+dist
+demo/dist
+.DS_Store
+*.log
+
+# AI Factory project context and agent skills (local / generated)
+.ai-factory/
+.ai-factory.json
+.cursor/
+.agents/
+skills-lock.json
+AGENTS.md
