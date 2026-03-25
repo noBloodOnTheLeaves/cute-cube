@@ -1,11 +1,45 @@
-/** One named animation (e.g. idle, talk). */
-export interface AnimationStateConfig {
+/** Uniform grid spritesheet: one image, equal-sized cells. */
+export type GridSheetOrder = "row-major" | "column-major";
+export interface GridSheetConfig {
+  /** Image path relative to `baseUrl`. */
+  image: string;
+  frameWidth: number;
+  frameHeight: number;
+  /** Number of columns in the grid (>= 1). */
+  columns: number;
+  /**
+   * Frames to play (may leave unused cells at the end of the grid).
+   * Determines how the linear `frameCount` sequence maps onto the 2D grid.
+   */
+  frameCount: number;
+  /**
+   * How frames are read out of the grid.
+   * - Default: `row-major` (left-to-right, then top-to-bottom)
+   * - `column-major` (top-to-bottom, then left-to-right)
+   */
+  order?: GridSheetOrder;
+}
+
+/** One named animation (e.g. idle, talk): either per-frame files or a single grid sheet. */
+export type AnimationStateConfig = AnimationStateFramesConfig | AnimationStateGridSheetConfig;
+
+export interface AnimationStateFramesConfig {
   /** Frame filenames relative to `baseUrl` (e.g. `frame_001.png`). */
   frames: string[];
-  /** Target playback speed in frames per second. */
   fps: number;
-  /** Whether the clip loops. */
   loop: boolean;
+}
+
+export interface AnimationStateGridSheetConfig {
+  gridSheet: GridSheetConfig;
+  fps: number;
+  loop: boolean;
+}
+
+export function isGridSheetAnimation(
+  cfg: AnimationStateConfig,
+): cfg is AnimationStateGridSheetConfig {
+  return "gridSheet" in cfg && cfg.gridSheet !== undefined;
 }
 
 /** Character mood/state (e.g. neutral, sad) paired with an action (idle, talk). */
@@ -67,8 +101,19 @@ export interface CharacterPlayerOptions {
   /** Extra scale factor after fitting to the container (default 1). */
   fitPadding?: number;
   /**
-   * When true (default), `setState` / `setPose` waits until the current clip finishes one loop
-   * (`loop: true`) or ends (`loop: false`) before crossfading. Set false for immediate transitions.
+   * Optional rendered size in CSS pixels (sprite texture dimensions × scale).
+   * When either is set, scaling follows these constraints instead of fitting the container;
+   * the sprite stays centered in the container and may extend past its edges.
+   * - Only `characterWidth`: scale so width matches.
+   * - Only `characterHeight`: scale so height matches.
+   * - Both: preserve aspect ratio and fit inside the box (contain).
+   */
+  characterWidth?: number;
+  characterHeight?: number;
+  /**
+   * When true, `setState` / `setPose` waits until the current clip finishes one loop (`loop: true`)
+   * or ends (`loop: false`) before crossfading. Default false: apply the new clip as soon as the
+   * request is processed (still queued while a crossfade or character-state transition clip runs).
    */
   queueStateUntilCycleEnd?: boolean;
   /**

@@ -23,6 +23,8 @@ export const CharacterView = defineComponent({
     debug: Boolean as PropType<boolean | undefined>,
     transitionMs: Number as PropType<number | undefined>,
     fitPadding: Number as PropType<number | undefined>,
+    characterWidth: Number as PropType<number | undefined>,
+    characterHeight: Number as PropType<number | undefined>,
     queueStateUntilCycleEnd: Boolean as PropType<boolean | undefined>,
   },
   setup(props) {
@@ -52,6 +54,12 @@ export const CharacterView = defineComponent({
       }
       if (props.fitPadding !== undefined) {
         options.fitPadding = props.fitPadding;
+      }
+      if (props.characterWidth !== undefined) {
+        options.characterWidth = props.characterWidth;
+      }
+      if (props.characterHeight !== undefined) {
+        options.characterHeight = props.characterHeight;
       }
       if (props.queueStateUntilCycleEnd !== undefined) {
         options.queueStateUntilCycleEnd = props.queueStateUntilCycleEnd;

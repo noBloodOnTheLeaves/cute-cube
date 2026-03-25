@@ -1,13 +1,14 @@
-import { AnimatedSprite, Application, Assets, Container, Texture } from "pixi.js";
+import { AnimatedSprite, Application, Assets, Container, Rectangle, Texture } from "pixi.js";
 import type {
   AnimationStateConfig,
   CharacterManifest,
   CharacterPlayerOptions,
   CharacterPose,
+  GridSheetConfig,
   LayeredCharacterManifest,
   LegacyCharacterManifest,
 } from "../types.js";
-import { isLayeredManifest } from "../types.js";
+import { isGridSheetAnimation, isLayeredManifest } from "../types.js";
 import {
   defaultPoseForLayered,
   isTransitionFlatKey,
@@ -23,6 +24,60 @@ function joinBase(baseUrl: string, frame: string): string {
   return new URL(frame, base).href;
 }
 
+function validateGridSheetAgainstTexture(
+  texWidth: number,
+  texHeight: number,
+  g: GridSheetConfig,
+): void {
+  const { frameWidth, frameHeight, columns, frameCount } = g;
+  if (frameCount < 1) {
+    throw new Error(`gridSheet.frameCount must be >= 1, got ${frameCount}`);
+  }
+  if (columns < 1) {
+    throw new Error(`gridSheet.columns must be >= 1, got ${columns}`);
+  }
+  if (frameWidth <= 0 || frameHeight <= 0) {
+    throw new Error(
+      `gridSheet frameWidth and frameHeight must be positive, got ${frameWidth}x${frameHeight}`,
+    );
+  }
+  const rows = Math.ceil(frameCount / columns);
+  const minW = columns * frameWidth;
+  const minH = rows * frameHeight;
+  if (texWidth < minW) {
+    throw new Error(
+      `Spritesheet width ${texWidth}px is smaller than grid width ${minW}px (${columns} columns × ${frameWidth}px)`,
+    );
+  }
+  if (texHeight < minH) {
+    throw new Error(
+      `Spritesheet height ${texHeight}px is smaller than grid height ${minH}px (${rows} rows × ${frameHeight}px for ${frameCount} frames)`,
+    );
+  }
+}
+
+function texturesFromGridSheet(base: Texture, g: GridSheetConfig): Texture[] {
+  const { frameWidth, frameHeight, columns, frameCount, order } = g;
+  const resolvedOrder = order ?? "row-major";
+  // The physical grid row count is derived from how many linear frames we expose.
+  const rows = Math.ceil(frameCount / columns);
+  const textures: Texture[] = [];
+  const source = base.source;
+  for (let i = 0; i < frameCount; i++) {
+    const col = resolvedOrder === "column-major" ? Math.floor(i / rows) : i % columns;
+    const row = resolvedOrder === "column-major" ? i % rows : Math.floor(i / columns);
+    const x = col * frameWidth;
+    const y = row * frameHeight;
+    textures.push(
+      new Texture({
+        source,
+        frame: new Rectangle(x, y, frameWidth, frameHeight),
+      }),
+    );
+  }
+  return textures;
+}
+
 export class CharacterPlayer {
   readonly container: HTMLElement;
   private readonly manifest: CharacterManifest;
@@ -32,6 +87,8 @@ export class CharacterPlayer {
   private readonly baseUrl: string;
   private readonly transitionMs: number;
   private readonly fitPadding: number;
+  private characterWidth: number | undefined;
+  private characterHeight: number | undefined;
   private readonly queueStateUntilCycleEnd: boolean;
   private readonly debug: boolean;
 
@@ -77,7 +134,9 @@ export class CharacterPlayer {
     this.baseUrl = options.baseUrl;
     this.transitionMs = options.transitionMs ?? 200;
     this.fitPadding = options.fitPadding ?? 1;
-    this.queueStateUntilCycleEnd = options.queueStateUntilCycleEnd ?? true;
+    this.characterWidth = options.characterWidth;
+    this.characterHeight = options.characterHeight;
+    this.queueStateUntilCycleEnd = options.queueStateUntilCycleEnd ?? false;
     this.debug = options.debug ?? false;
 
     const keys = Object.keys(this.flatStates);
@@ -159,6 +218,17 @@ export class CharacterPlayer {
   /** Logical pose for layered manifests; `null` for legacy flat manifests. */
   getPose(): CharacterPose | null {
     return this.currentPose;
+  }
+
+  /**
+   * Set explicit character size in CSS pixels (see `CharacterPlayerOptions.characterWidth` /
+   * `characterHeight`). Pass no arguments or `undefined` for both dimensions to restore
+   * scaling that fits the container (still multiplied by `fitPadding`).
+   */
+  setCharacterSize(width?: number, height?: number): void {
+    this.characterWidth = width;
+    this.characterHeight = height;
+    this.layout();
   }
 
   /** Switch pose (layered manifests only). */
@@ -637,8 +707,37 @@ export class CharacterPlayer {
 
   private async createSpriteForState(name: string): Promise<AnimatedSprite> {
     const cfg = this.flatStates[name];
-    const urls = cfg.frames.map((f) => joinBase(this.baseUrl, f));
-    const textures = await Promise.all(urls.map((url) => Assets.load<Texture>(url)));
+    let textures: Texture[];
+
+    if (isGridSheetAnimation(cfg)) {
+      const g = cfg.gridSheet;
+      const url = joinBase(this.baseUrl, g.image);
+      const base = await Assets.load<Texture>(url);
+      const tw = base.width;
+      const th = base.height;
+      validateGridSheetAgainstTexture(tw, th, g);
+      if (this.debug) {
+        console.debug(
+          `[CharacterPlayer] gridSheet "${name}": image=${url} size=${tw}x${th} cell=${g.frameWidth}x${g.frameHeight} columns=${g.columns} frameCount=${g.frameCount}`,
+        );
+      }
+      textures = texturesFromGridSheet(base, g);
+      if (this.debug) {
+        console.log("[FIX] gridSheet textures built", {
+          name,
+          image: g.image,
+          texturePx: `${tw}x${th}`,
+          cellPx: `${g.frameWidth}x${g.frameHeight}`,
+          columns: g.columns,
+          frames: textures.length,
+          order: g.order ?? "row-major",
+        });
+      }
+    } else {
+      const urls = cfg.frames.map((f) => joinBase(this.baseUrl, f));
+      textures = await Promise.all(urls.map((url) => Assets.load<Texture>(url)));
+    }
+
     const sprite = new AnimatedSprite({
       textures,
       animationSpeed: cfg.fps / 60,
@@ -664,7 +763,18 @@ export class CharacterPlayer {
     if (tw <= 0 || th <= 0) {
       return;
     }
-    const scale = Math.min(w / tw, h / th) * this.fitPadding;
+    const cw = this.characterWidth;
+    const ch = this.characterHeight;
+    let scale: number;
+    if (cw !== undefined && ch !== undefined) {
+      scale = Math.min(cw / tw, ch / th) * this.fitPadding;
+    } else if (cw !== undefined) {
+      scale = (cw / tw) * this.fitPadding;
+    } else if (ch !== undefined) {
+      scale = (ch / th) * this.fitPadding;
+    } else {
+      scale = Math.min(w / tw, h / th) * this.fitPadding;
+    }
     this.root.scale.set(scale);
   }
 

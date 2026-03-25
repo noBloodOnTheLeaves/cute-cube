@@ -14,6 +14,8 @@ export interface CharacterViewProps {
   debug?: boolean;
   transitionMs?: number;
   fitPadding?: number;
+  characterWidth?: number;
+  characterHeight?: number;
   queueStateUntilCycleEnd?: boolean;
   className?: string;
   style?: CSSProperties;
@@ -27,6 +29,8 @@ export function CharacterView({
   debug,
   transitionMs,
   fitPadding,
+  characterWidth,
+  characterHeight,
   queueStateUntilCycleEnd,
   className,
   style,
@@ -58,13 +62,30 @@ export function CharacterView({
     if (fitPadding !== undefined) {
       options.fitPadding = fitPadding;
     }
+    if (characterWidth !== undefined) {
+      options.characterWidth = characterWidth;
+    }
+    if (characterHeight !== undefined) {
+      options.characterHeight = characterHeight;
+    }
     if (queueStateUntilCycleEnd !== undefined) {
       options.queueStateUntilCycleEnd = queueStateUntilCycleEnd;
     }
     const player = new CharacterPlayer(options);
     void player.init();
     return () => player.destroy();
-  }, [manifest, baseUrl, initialState, initialPose, debug, transitionMs, fitPadding, queueStateUntilCycleEnd]);
+  }, [
+    manifest,
+    baseUrl,
+    initialState,
+    initialPose,
+    debug,
+    transitionMs,
+    fitPadding,
+    characterWidth,
+    characterHeight,
+    queueStateUntilCycleEnd,
+  ]);
 
   return (
     <div

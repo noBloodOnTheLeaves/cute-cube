@@ -18,8 +18,10 @@ async function main(): Promise<void> {
     container: wrap,
     manifest,
     baseUrl,
-    transitionMs: 200,
+    transitionMs: 380,
     initialPose: { characterState: "neutral", action: "idle" },
+    characterWidth: 250,
+    characterHeight: 250,
   });
 
   await player.init();
