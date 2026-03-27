@@ -269,11 +269,29 @@ export class CharacterPlayer {
       throw new Error("CharacterPlayer: playNeutralClick requires init() first");
     }
 
-    this.abortImmediatePlayback();
     const token = ++this.clickCompletionToken;
     this.logDebug("playNeutralClick: start", { token, clickKey });
 
-    await this.swapInstant(clickKey);
+    // Load textures while the current clip is still visible. `abortImmediatePlayback` clears the
+    // stage; if we tore down first, the first click would show an empty canvas until `Assets.load`
+    // finishes (subsequent clicks hit the cache and barely flash).
+    const incoming = await this.createSpriteForState(clickKey, { autoPlay: false });
+    if (this.destroyed || token !== this.clickCompletionToken) {
+      incoming.destroy({ texture: false, textureSource: false });
+      return;
+    }
+
+    this.abortImmediatePlayback();
+    if (!this.root) {
+      incoming.destroy({ texture: false, textureSource: false });
+      return;
+    }
+
+    this.attachSprite(incoming);
+    incoming.gotoAndPlay(0);
+    this.currentFlatKey = clickKey;
+    this.syncPoseFromFlatKey();
+    this.maybeAttachTransitionClipCompletion();
 
     if (this.destroyed || token !== this.clickCompletionToken) {
       return;
@@ -697,6 +715,10 @@ export class CharacterPlayer {
 
   private async mountState(name: string): Promise<void> {
     const sprite = await this.createSpriteForState(name);
+    this.attachSprite(sprite);
+  }
+
+  private attachSprite(sprite: AnimatedSprite): void {
     this.root!.addChild(sprite);
     this.currentSprite = sprite;
     const tex = sprite.texture;
@@ -705,7 +727,10 @@ export class CharacterPlayer {
     this.layout();
   }
 
-  private async createSpriteForState(name: string): Promise<AnimatedSprite> {
+  private async createSpriteForState(
+    name: string,
+    options?: { autoPlay?: boolean },
+  ): Promise<AnimatedSprite> {
     const cfg = this.flatStates[name];
     let textures: Texture[];
 
@@ -745,7 +770,9 @@ export class CharacterPlayer {
       autoPlay: false,
     });
     sprite.anchor.set(0.5);
-    sprite.play();
+    if (options?.autoPlay !== false) {
+      sprite.play();
+    }
     return sprite;
   }
 
