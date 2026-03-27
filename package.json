@@ -1,5 +1,5 @@
 {
-  "name": "charactor",
+  "name": "cute-cube",
   "version": "0.1.0",
   "description": "Framework-agnostic sprite character with named animation states (PixiJS)",
   "type": "module",
