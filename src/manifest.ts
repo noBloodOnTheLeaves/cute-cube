@@ -135,6 +135,31 @@ export const SAD_DEMO_FRAMES = {
   sadTalk: 126,
   /** `neutral_click_512.png` is 3072×2298 → 6×6 cells @ 512×383 (36 frames). */
   neutralClick: 36,
+  /**
+   * `sad_click_512.png` is 4608×3447 → 9×9 grid @ 512×383; only **75** frames have content
+   * (last 6 cells in row-major order are empty padding—do not play them).
+   */
+  sadClick: 75,
+  /**
+   * `sad_thinking_512.png` is 5632×3830 → 11×10 grid @ 512×383; **105** frames drawn
+   * (last 5 cells empty—avoids blink when looping).
+   */
+  sadThinking: 105,
+  /**
+   * `neutral_thinking_512.png` is 6144×4213 → 12×11 grid @ 512×383; **122** frames drawn
+   * (last 10 cells empty—avoids blink when looping).
+   */
+  neutralThinking: 122,
+  /**
+   * `sad_celebrating_512.png` is 6144×4213 → 12×11 grid @ 512×383; **122** frames drawn
+   * (last 10 cells empty).
+   */
+  sadCelebrating: 122,
+  /**
+   * `neutral_celebrating_512.png` is 6656×4596 → 13×12 grid @ 512×383; **150** frames drawn
+   * (last 6 cells empty).
+   */
+  neutralCelebrating: 150,
 } as const;
 
 /**
@@ -191,6 +216,41 @@ export const SAD_DEMO_GRID_SHEETS = {
     columns: 9,
     frameCount: SAD_DEMO_FRAMES.transitionSadToNeutral,
   },
+  sadClick: {
+    image: "sheets/sad_click_512.png",
+    frameWidth: 512,
+    frameHeight: 383,
+    columns: 9,
+    frameCount: SAD_DEMO_FRAMES.sadClick,
+  },
+  sadThinking: {
+    image: "sheets/sad_thinking_512.png",
+    frameWidth: 512,
+    frameHeight: 383,
+    columns: 11,
+    frameCount: SAD_DEMO_FRAMES.sadThinking,
+  },
+  neutralThinking: {
+    image: "sheets/neutral_thinking_512.png",
+    frameWidth: 512,
+    frameHeight: 383,
+    columns: 12,
+    frameCount: SAD_DEMO_FRAMES.neutralThinking,
+  },
+  sadCelebrating: {
+    image: "sheets/sad_celebrating_512.png",
+    frameWidth: 512,
+    frameHeight: 383,
+    columns: 12,
+    frameCount: SAD_DEMO_FRAMES.sadCelebrating,
+  },
+  neutralCelebrating: {
+    image: "sheets/neutral_celebrating_512.png",
+    frameWidth: 512,
+    frameHeight: 383,
+    columns: 13,
+    frameCount: SAD_DEMO_FRAMES.neutralCelebrating,
+  },
 } as const;
 
 function sadDemoGridClip(
@@ -228,12 +288,17 @@ export function createSadDemoManifest(): LayeredCharacterManifest {
           idle: sadDemoGridClip(SAD_DEMO_GRID_SHEETS.neutralIdle, 32, true),
           talk: sadDemoGridClip(SAD_DEMO_GRID_SHEETS.neutralTalk, 32, true),
           click: sadDemoGridClip(SAD_DEMO_GRID_SHEETS.neutralClick, 50, false),
+          thinking: sadDemoGridClip(SAD_DEMO_GRID_SHEETS.neutralThinking, 32, true),
+          celebrating: sadDemoGridClip(SAD_DEMO_GRID_SHEETS.neutralCelebrating, 32, false),
         },
       },
       sad: {
         actions: {
           idle: sadDemoGridClip(SAD_DEMO_GRID_SHEETS.sadIdle, 32, true),
           talk: sadDemoGridClip(SAD_DEMO_GRID_SHEETS.sadTalk, 32, true),
+          click: sadDemoGridClip(SAD_DEMO_GRID_SHEETS.sadClick, 50, false),
+          thinking: sadDemoGridClip(SAD_DEMO_GRID_SHEETS.sadThinking, 32, true),
+          celebrating: sadDemoGridClip(SAD_DEMO_GRID_SHEETS.sadCelebrating, 32, false),
         },
       },
     },

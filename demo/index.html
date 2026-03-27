@@ -86,12 +86,16 @@
           <span class="group-label">Action</span>
           <button type="button" data-action="idle">idle</button>
           <button type="button" data-action="talk">talk</button>
-          <button type="button" data-play-neutral-click>click</button>
+          <button type="button" data-action="thinking">thinking</button>
+          <button type="button" data-play-click>click</button>
+          <button type="button" data-play-one-shot="celebrating">celebrating</button>
         </div>
         <span class="hint"
           >Melt / unmelt transitions play when switching neutral &harr; sad. Crossfade uses
-          <code>transitionMs</code> (default 200ms). While <strong>neutral</strong>, click the cube or
-          the click button — the reaction plays fast and returns to idle when it finishes.</span
+          <code>transitionMs</code> (default 380ms here). While <strong>neutral</strong> or
+          <strong>sad</strong>, <strong>thinking</strong> loops like idle until you pick another action;
+          <strong>click</strong> / <strong>celebrating</strong> are one-shots (crossfade back to idle).
+          Click the stage for the click reaction.</span
         >
       </div>
     </div>

@@ -119,8 +119,8 @@ export class CharacterPlayer {
   private textureWidth = 512;
   private textureHeight = 512;
 
-  /** Invalidates in-flight `playNeutralClick` completion handlers after re-click or `destroy()`. */
-  private clickCompletionToken = 0;
+  /** Invalidates in-flight `playOneShotAction` completion handlers after a new one-shot or `destroy()`. */
+  private oneShotCompletionToken = 0;
   private destroyed = false;
 
   constructor(options: CharacterPlayerOptions) {
@@ -248,35 +248,43 @@ export class CharacterPlayer {
   }
 
   /**
-   * Play the neutral `click` clip immediately: aborts crossfades, cycle queues, and transition clips,
-   * then returns to `neutral/idle` from the start when the click clip ends. Layered manifests only;
-   * requires a `neutral/click` clip and a neutral playback context (see `playNeutralClick` errors).
+   * Play a one-shot action clip immediately: aborts crossfades, cycle queues, and transition clips,
+   * then returns to `{ characterState, action: "idle" }` when the clip ends. Layered manifests only;
+   * requires a matching clip and playback context for that character state (including a
+   * `from`→… transition clip when `from` matches).
    */
-  async playNeutralClick(): Promise<void> {
+  async playOneShotAction(pose: CharacterPose): Promise<void> {
     if (!this.layered) {
-      throw new Error("CharacterPlayer: playNeutralClick requires a layered manifest");
+      throw new Error("CharacterPlayer: playOneShotAction requires a layered manifest");
     }
-    const clickKey = poseToKey({ characterState: "neutral", action: "click" });
-    if (!this.flatStates[clickKey]) {
-      throw new Error(`CharacterPlayer: manifest has no "${clickKey}" clip`);
+    this.validatePose(pose);
+    const actionKey = poseToKey(pose);
+    if (!this.flatStates[actionKey]) {
+      throw new Error(`CharacterPlayer: manifest has no "${actionKey}" clip`);
     }
-    if (!this.isNeutralPlaybackContext()) {
+    const cfg = this.flatStates[actionKey]!;
+    if (cfg.loop) {
       throw new Error(
-        "CharacterPlayer: playNeutralClick only applies in neutral (including a neutral→… transition clip)",
+        `CharacterPlayer: playOneShotAction expects a non-looping clip; "${actionKey}" has loop: true`,
+      );
+    }
+    if (!this.isCharacterStatePlaybackContext(pose.characterState)) {
+      throw new Error(
+        `CharacterPlayer: playOneShotAction only applies when playback matches character state "${pose.characterState}" (including a matching transition clip)`,
       );
     }
     if (!this.app || !this.root) {
-      throw new Error("CharacterPlayer: playNeutralClick requires init() first");
+      throw new Error("CharacterPlayer: playOneShotAction requires init() first");
     }
 
-    const token = ++this.clickCompletionToken;
-    this.logDebug("playNeutralClick: start", { token, clickKey });
+    const token = ++this.oneShotCompletionToken;
+    this.logDebug("playOneShotAction: start", { token, actionKey });
 
     // Load textures while the current clip is still visible. `abortImmediatePlayback` clears the
-    // stage; if we tore down first, the first click would show an empty canvas until `Assets.load`
-    // finishes (subsequent clicks hit the cache and barely flash).
-    const incoming = await this.createSpriteForState(clickKey, { autoPlay: false });
-    if (this.destroyed || token !== this.clickCompletionToken) {
+    // stage; if we tore down first, the first trigger would show an empty canvas until `Assets.load`
+    // finishes (subsequent runs hit the cache and barely flash).
+    const incoming = await this.createSpriteForState(actionKey, { autoPlay: false });
+    if (this.destroyed || token !== this.oneShotCompletionToken) {
       incoming.destroy({ texture: false, textureSource: false });
       return;
     }
@@ -289,11 +297,11 @@ export class CharacterPlayer {
 
     this.attachSprite(incoming);
     incoming.gotoAndPlay(0);
-    this.currentFlatKey = clickKey;
+    this.currentFlatKey = actionKey;
     this.syncPoseFromFlatKey();
     this.maybeAttachTransitionClipCompletion();
 
-    if (this.destroyed || token !== this.clickCompletionToken) {
+    if (this.destroyed || token !== this.oneShotCompletionToken) {
       return;
     }
 
@@ -301,8 +309,7 @@ export class CharacterPlayer {
     if (!sprite) {
       return;
     }
-    const cfg = this.flatStates[clickKey]!;
-    const idleKey = poseToKey({ characterState: "neutral", action: "idle" });
+    const idleKey = poseToKey({ characterState: pose.characterState, action: "idle" });
 
     const done = (): void => {
       sprite.onComplete = undefined;
@@ -310,20 +317,23 @@ export class CharacterPlayer {
       if (this.destroyed) {
         return;
       }
-      if (token !== this.clickCompletionToken) {
-        this.logDebug("playNeutralClick: completion ignored (superseded)", { token });
+      if (token !== this.oneShotCompletionToken) {
+        this.logDebug("playOneShotAction: completion ignored (superseded)", { token });
         return;
       }
-      this.logDebug("playNeutralClick: click complete -> idle", { token });
-      void this.swapInstant(idleKey);
+      this.logDebug("playOneShotAction: complete -> idle", { token, idleKey });
+      void this.applyTransitionNow(idleKey);
     };
 
-    if (!cfg.loop) {
-      sprite.onComplete = done;
-      sprite.onLoop = undefined;
-    } else {
-      done();
-    }
+    sprite.onComplete = done;
+    sprite.onLoop = undefined;
+  }
+
+  /**
+   * Play the neutral `click` clip (see {@link playOneShotAction}).
+   */
+  async playNeutralClick(): Promise<void> {
+    return this.playOneShotAction({ characterState: "neutral", action: "click" });
   }
 
   private resolveSetStateName(name: string): string {
@@ -333,13 +343,13 @@ export class CharacterPlayer {
     return name;
   }
 
-  /** True when the current clip is neutral-side or a transition clip leaving `neutral`. */
-  private isNeutralPlaybackContext(): boolean {
+  /** True when the current clip is for `characterState` or a transition clip leaving that state. */
+  private isCharacterStatePlaybackContext(characterState: string): boolean {
     const k = this.currentFlatKey;
     if (!k) {
       return false;
     }
-    if (k.startsWith("neutral/")) {
+    if (k.startsWith(`${characterState}/`)) {
       return true;
     }
     if (isTransitionFlatKey(k)) {
@@ -348,7 +358,7 @@ export class CharacterPlayer {
       if (i <= 0) {
         return false;
       }
-      return rest.slice(0, i) === "neutral";
+      return rest.slice(0, i) === characterState;
     }
     return false;
   }
@@ -807,7 +817,7 @@ export class CharacterPlayer {
 
   destroy(): void {
     this.destroyed = true;
-    this.clickCompletionToken += 1;
+    this.oneShotCompletionToken += 1;
     this.clearCycleWait();
 
     if (this.app) {

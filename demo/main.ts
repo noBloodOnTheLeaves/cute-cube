@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 import {
   CharacterPlayer,
   createSadDemoManifest,
@@ -29,28 +30,47 @@ async function main(): Promise<void> {
   let characterState: CharacterPose["characterState"] = "neutral";
   let action: CharacterPose["action"] = "idle";
 
-  const clickBtn = document.querySelector<HTMLButtonElement>(
-    "button[data-play-neutral-click]",
+  const clickBtn = document.querySelector<HTMLButtonElement>("button[data-play-click]");
+  const oneShotButtons = document.querySelectorAll<HTMLButtonElement>(
+    "button[data-play-one-shot]",
   );
 
-  function syncNeutralClickUi(): void {
-    const neutral = characterState === "neutral";
+  function canPlayStateOneShots(): boolean {
+    return characterState === "neutral" || characterState === "sad";
+  }
+
+  function syncOneShotUi(): void {
+    const on = canPlayStateOneShots();
     if (clickBtn) {
-      clickBtn.disabled = !neutral;
+      clickBtn.disabled = !on;
     }
-    wrap.style.cursor = neutral ? "pointer" : "default";
+    oneShotButtons.forEach((btn) => {
+      btn.disabled = !on;
+    });
+    player.container.style.cursor = on ? "pointer" : "default";
   }
 
   function applyPose(): void {
     void player.setPose({ characterState, action });
-    syncNeutralClickUi();
+    syncOneShotUi();
   }
 
-  function playNeutralClickIfAllowed(): void {
-    if (characterState !== "neutral") {
+  function playClickIfAllowed(): void {
+    if (!canPlayStateOneShots()) {
       return;
     }
-    void player.playNeutralClick();
+    if (characterState === "neutral") {
+      void player.playNeutralClick();
+    } else {
+      void player.playOneShotAction({ characterState: "sad", action: "click" });
+    }
+  }
+
+  function playCelebratingIfAllowed(): void {
+    if (!canPlayStateOneShots()) {
+      return;
+    }
+    void player.playOneShotAction({ characterState, action: "celebrating" });
   }
 
   document.querySelectorAll<HTMLButtonElement>("button[data-character-state]").forEach((btn) => {
@@ -66,7 +86,7 @@ async function main(): Promise<void> {
   document.querySelectorAll<HTMLButtonElement>("button[data-action]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const a = btn.getAttribute("data-action");
-      if (a === "idle" || a === "talk") {
+      if (a === "idle" || a === "talk" || a === "thinking") {
         action = a;
         applyPose();
       }
@@ -74,14 +94,23 @@ async function main(): Promise<void> {
   });
 
   clickBtn?.addEventListener("click", () => {
-    playNeutralClickIfAllowed();
+    playClickIfAllowed();
+  });
+
+  oneShotButtons.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const a = btn.getAttribute("data-play-one-shot");
+      if (a === "celebrating") {
+        playCelebratingIfAllowed();
+      }
+    });
   });
 
   wrap.addEventListener("click", () => {
-    playNeutralClickIfAllowed();
+    playClickIfAllowed();
   });
 
-  syncNeutralClickUi();
+  syncOneShotUi();
 }
 
 void main();
