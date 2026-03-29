@@ -1,6 +1,6 @@
 {
   "name": "cute-cube",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Framework-agnostic sprite character with named animation states (PixiJS)",
   "type": "module",
   "main": "./dist/index.cjs",
