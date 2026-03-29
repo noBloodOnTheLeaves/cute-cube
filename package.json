@@ -81,5 +81,13 @@
     "character",
     "animation"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/noBloodOnTheLeaves/cute-cube.git"
+  },
+  "homepage": "https://nobloodontheleaves.github.io/cute-cube",
+  "bugs": {
+    "url": "https://github.com/noBloodOnTheLeaves/cute-cube/issues"
+  },
   "license": "MIT"
 }
