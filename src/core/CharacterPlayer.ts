@@ -24,6 +24,24 @@ function joinBase(baseUrl: string, frame: string): string {
   return new URL(frame, base).href;
 }
 
+/** Unique texture URLs referenced by a flat manifest (grid sheets + per-frame lists). */
+function collectManifestTextureUrls(
+  flatStates: Record<string, AnimationStateConfig>,
+  baseUrl: string,
+): string[] {
+  const seen = new Set<string>();
+  for (const cfg of Object.values(flatStates)) {
+    if (isGridSheetAnimation(cfg)) {
+      seen.add(joinBase(baseUrl, cfg.gridSheet.image));
+    } else {
+      for (const f of cfg.frames) {
+        seen.add(joinBase(baseUrl, f));
+      }
+    }
+  }
+  return [...seen];
+}
+
 function validateGridSheetAgainstTexture(
   texWidth: number,
   texHeight: number,
@@ -205,6 +223,28 @@ export class CharacterPlayer {
 
     const start = this.currentFlatKey!;
     await this.mountState(start);
+  }
+
+  /**
+   * Fetches every texture URL from the manifest into Pixi’s asset cache so later clip changes
+   * reuse cached data instead of waiting on the network. Safe to call after {@link init}; does not
+   * change the current animation. Failed loads are ignored unless `debug` is enabled (then failures
+   * are logged with `console.debug`).
+   */
+  async preloadAllAssets(): Promise<void> {
+    if (this.destroyed) {
+      return;
+    }
+    const urls = collectManifestTextureUrls(this.flatStates, this.baseUrl);
+    const results = await Promise.allSettled(urls.map((url) => Assets.load<Texture>(url)));
+    if (!this.debug) {
+      return;
+    }
+    results.forEach((r, i) => {
+      if (r.status === "rejected") {
+        console.debug("[CharacterPlayer] preload failed", urls[i], r.reason);
+      }
+    });
   }
 
   /**

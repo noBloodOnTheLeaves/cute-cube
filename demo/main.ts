@@ -21,11 +21,22 @@ async function main(): Promise<void> {
     baseUrl,
     transitionMs: 380,
     initialPose: { characterState: "neutral", action: "idle" },
-    characterWidth: 250,
-    characterHeight: 250,
+    characterWidth: 450,
+    characterHeight: 450,
   });
 
   await player.init();
+
+  const scheduleIdle =
+    typeof globalThis.requestIdleCallback === "function"
+      ? (cb: () => void) => globalThis.requestIdleCallback(cb, { timeout: 5000 })
+      : (cb: () => void) => {
+          globalThis.setTimeout(cb, 0);
+        };
+
+  scheduleIdle(() => {
+    void player.preloadAllAssets();
+  });
 
   let characterState: CharacterPose["characterState"] = "neutral";
   let action: CharacterPose["action"] = "idle";
